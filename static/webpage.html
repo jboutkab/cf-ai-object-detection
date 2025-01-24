@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webcam Real-Time Object Detection with Versent and Cloudflare</title>
+    <style>
+        #pageTitle {
+            position: -webkit-sticky; /* For Safari */
+            position: sticky;
+            top: 0;
+            background-color: #001F3F; /* Versent dark blue */
+            color: white;
+            padding: 15px;
+            margin: 0;
+            font-size: 24px;
+            text-align: center;
+            font-family: Arial, sans-serif;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: #F4F4F4; /* Light grey for contrast */
+        }
+        #logoContainer {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        #logoContainer img {
+            height: 60px;
+            object-fit: contain;
+        }
+        #videoContainer {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            width: 640px;
+            height: 480px;
+            background-color: #FFFFFF; /* White background for video container */
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 2;
+            pointer-events: none; /* Ensure interactions go to the video */
+        }
+        #resultsTable {
+            margin: 20px;
+            border-collapse: collapse;
+            width: 60%;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        #resultsTable th, #resultsTable td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+            font-size: 16px;
+        }
+        #resultsTable th {
+            background-color: #001F3F; /* Versent dark blue */
+            color: white;
+        }
+        #resultsTable tr:nth-child(even) {
+            background-color: #F9F9F9;
+        }
+        #resultsTable tr:hover {
+            background-color: #E8F0FE; /* Light blue hover effect */
+        }
+        .footer {
+            margin-top: 20px;
+            font-size: 14px;
+            text-align: center;
+            color: #555555;
+        }
+        .footer a {
+            color: #001F3F;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div id="logoContainer">
+        <img src="https://www.cloudflare.com/img/logo-cloudflare-dark.svg" alt="Cloudflare Logo">
+        <img src="https://versent.com.au/wp-content/uploads/2023/03/versent-og.png" alt="Versent Logo">
+    </div>
+    <h1 id="pageTitle">Webcam Real-Time Object Detection with Versent and Cloudflare</h1>
+    <div id="videoContainer">
+        <video id="webcam" autoplay playsinline width="640" height="480"></video>
+        <canvas id="canvas" width="640" height="480"></canvas>
+    </div>
+    <table id="resultsTable">
+        <thead>
+            <tr>
+                <th>Label</th>
+                <th>Confidence Score</th>
+                <th>Alert</th>
+            </tr>
+        </thead>
+        <tbody id="resultsBody">
+        </tbody>
+    </table>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const context = canvas.getContext('2d');
+        const resultsBody = document.getElementById('resultsBody');
+
+        let previousDetections = [];
+
+        function getTopLabels(data) {
+            const uniqueLabels = {};
+            data.response.forEach(item => {
+                if (!uniqueLabels[item.label]) {
+                    uniqueLabels[item.label] = item;
+                }
+            });
+            return Object.values(uniqueLabels).filter(item => item.score > 0.8);
+        }
+
+        // Access the webcam
+        async function setupWebcam() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+            } catch (error) {
+                console.error('Error accessing webcam:', error);
+            }
+        }
+
+        // Function to process frames asynchronously
+        let lastCaptureTime = 0;
+        const captureInterval = 2000; // 2-second interval
+
+        async function processFrame() {
+            const now = performance.now();
+            if (now - lastCaptureTime < captureInterval) {
+                requestAnimationFrame(processFrame);
+                return;
+            }
+            lastCaptureTime = now;
+
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL('image/jpeg');
+
+            // Process the frame asynchronously without awaiting response
+            sendFrameForProcessing(dataUrl);
+
+            // Continue capturing the next frame
+            requestAnimationFrame(processFrame);
+        }
+
+        async function sendFrameForProcessing(dataUrl) {
+            try {
+                const response = await fetch('/process', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ image: dataUrl }),
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    const uniqueItems = getTopLabels(result);
+                    updateResultsTable(uniqueItems);
+                    drawDetections(uniqueItems);
+                    previousDetections = uniqueItems; // Update previous detections
+                } else { 
+                    console.error('Error processing frame:', await response.text());
+                }
+            } catch (error) {
+                console.error('Error sending frame for processing:', error);
+            }
+        }
+
+        // Update the results table with detection data
+        function updateResultsTable(detections) {
+            resultsBody.innerHTML = ''; // Clear the table body
+            detections.forEach(detection => {
+                const row = document.createElement('tr');
+
+                const labelCell = document.createElement('td');
+                labelCell.textContent = detection.label;
+                row.appendChild(labelCell);
+
+                const scoreCell = document.createElement('td');
+                scoreCell.textContent = detection.score.toFixed(2);
+                row.appendChild(scoreCell);
+
+                const alertCell = document.createElement('td');
+                if (detection.label.toLowerCase() === 'knife') {
+                    alertCell.textContent = 'Danger';
+                    alertCell.style.color = 'red';
+                    row.style.backgroundColor = '#FFDDDD'; // Light red background for danger
+                } else {
+                    alertCell.textContent = 'Safe';
+                    alertCell.style.color = 'green';
+                    row.style.backgroundColor = '#DDFFDD'; // Light green background for safe
+                }
+                row.appendChild(alertCell);
+
+                resultsBody.appendChild(row);
+            });
+        }
+
+        // Draw detections directly on the canvas overlay
+        function drawDetections(detections) {
+            const itemsToDraw = detections.length > 0 ? detections : previousDetections;
+
+            context.clearRect(0, 0, canvas.width, canvas.height); // Clear previous drawings
+
+            itemsToDraw.forEach(detection => {
+                const { xmin, xmax, ymin, ymax } = detection.box;
+                const width = xmax - xmin;
+                const height = ymax - ymin;
+
+                context.strokeStyle = 'red';
+                context.lineWidth = 2;
+                context.strokeRect(xmin, ymin, width, height);
+                context.font = '22px Arial';
+                context.fillStyle = 'red';
+                context.fillText(`${detection.label}: ${detection.score.toFixed(2)}`, xmin, ymin > 20 ? ymin - 10 : ymin + 20);
+            });
+        }
+
+        // Initialize the webcam and start the real-time detection loop
+        setupWebcam().then(() => {
+            video.addEventListener('loadeddata', () => {
+                requestAnimationFrame(processFrame);
+            });
+        });
+    </script>
+
+    <div class="footer">
+    </div>
+</body>
+</html>

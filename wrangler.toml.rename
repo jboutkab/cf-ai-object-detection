@@ -1,0 +1,16 @@
+name = "techradar-obj-detection"
+compatibility_date = "2023-12-01"
+
+ [vars]
+ SLACK_WEBHOOK = ""
+
+ [[kv_namespaces]]
+ binding = ""
+ id = ""
+
+ [ai]
+binding = "AI"
+
+[observability]
+enabled = true
+head_sampling_rate = 1 # optional. default = 1.
