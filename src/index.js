@@ -1,4 +1,4 @@
-import html from '../static/webpage.html';
+import html from './static/webpage.html';
 
 export default {
     async fetch(request, env) {
@@ -17,20 +17,6 @@ export default {
                 },
             });
         } 
-        // Add this to your Worker to serve CSS/JS files
-if (url.pathname.endsWith('.css')) {
-    const css = await import('../static/styles.css');
-    return new Response(css.default, {
-        headers: { 'Content-Type': 'text/css' }
-    });
-}
-
-if (url.pathname.endsWith('.js')) {
-    const js = await import(`../static${url.pathname}`);
-    return new Response(js.default, {
-        headers: { 'Content-Type': 'application/javascript' }
-    });
-}
         
         if (request.method === 'POST' && url.pathname === '/process') {
             try {
